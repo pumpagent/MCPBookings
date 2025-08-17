@@ -34,22 +34,57 @@ def get_calendar_service():
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            # Load credentials from environment variables, as recommended for Render.
-            try:
-                creds_info = json.loads(os.environ.get('GOOGLE_CALENDAR_CREDENTIALS'))
-                flow = InstalledAppFlow.from_client_config(creds_info, SCOPES)
-                creds = flow.run_local_server(port=0)
-            except json.JSONDecodeError:
-                return jsonify({"error": "Invalid GOOGLE_CALENDAR_CREDENTIALS environment variable."}), 400
-            except Exception as e:
-                return jsonify({"error": f"Authentication failed: {e}"}), 500
-        
-        # Save the credentials for the next run.
-        with open('token.json', 'w') as token:
-            token.write(creds.to_json())
+            # We are running a manual auth flow, so a token should exist.
+            raise Exception("No authentication token found. Please run the manual auth flow.")
 
     service = build('calendar', 'v3', credentials=creds)
     return service
+
+# MANUAL AUTHENTICATION FLOW
+# These endpoints are for a one-time setup to get the token.json file.
+# You will remove them after the setup is complete.
+@app.route('/get-auth-url')
+def get_auth_url():
+    """
+    Returns the URL needed to authorize the app.
+    """
+    try:
+        if os.path.exists('credentials.json'):
+            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
+        else:
+            creds_info = json.loads(os.environ.get('GOOGLE_CALENDAR_CREDENTIALS'))
+            flow = InstalledAppFlow.from_client_config(creds_info, SCOPES)
+        
+        auth_url, _ = flow.authorization_url(prompt='consent')
+        return f"Please visit this URL to authorize the app: <a href='{auth_url}'>{auth_url}</a>"
+    except Exception as e:
+        return jsonify({"error": f"Failed to get authorization URL: {e}"}), 500
+
+@app.route('/callback')
+def callback():
+    """
+    Handles the redirect from Google to exchange the authorization code for a token.
+    """
+    code = request.args.get('code')
+    if not code:
+        return "Authorization code not found.", 400
+
+    try:
+        if os.path.exists('credentials.json'):
+            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
+        else:
+            creds_info = json.loads(os.environ.get('GOOGLE_CALENDAR_CREDENTIALS'))
+            flow = InstalledAppFlow.from_client_config(creds_info, SCOPES)
+        
+        flow.fetch_token(code=code)
+        
+        with open('token.json', 'w') as token:
+            token.write(flow.credentials.to_json())
+        
+        return "Authentication successful! The token.json file has been created. You can now stop the server."
+    except Exception as e:
+        return jsonify({"error": f"Failed to get token: {e}"}), 500
+
 
 # Main endpoint to handle scheduling requests from ElevenLabs.
 @app.route('/schedule-appointment', methods=['POST'])
@@ -113,4 +148,42 @@ if __name__ == '__main__':
     # When running locally, you'll need to handle the port.
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=True)
+```
+# requirements.txt
+# This file lists all the Python libraries that Render needs to install
+# for your application to run correctly.
+
+Flask==2.3.3
+Werkzeug==2.3.8
+google-api-python-client
+google-auth
+google-auth-oauthlib
+gunicorn
+```
+# render.yaml
+# This is a configuration file that tells Render how to deploy your service.
+# Render automatically detects this file and configures your app accordingly.
+
+services:
+- type: web
+  name: adiuvansai-mcp-server
+  env: python
+  buildCommand: "pip install -r requirements.txt"
+  startCommand: "gunicorn calendar_server:app"
+  envVars:
+  - key: GOOGLE_CALENDAR_CREDENTIALS
+    sync: false
+```
+# credentials.json
+# You DO NOT push this file to Git. Instead, you'll copy its contents and
+# paste them into Render as a secure environment variable.
+
+# Copy the entire content of your credentials.json file here.
+# For example:
+# {
+#   "web": {
+#     "client_id": "...",
+#     "project_id": "...",
+#     "auth_uri": "...",
+#     ...
 #   }
