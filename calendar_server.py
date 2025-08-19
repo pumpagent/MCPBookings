@@ -55,6 +55,30 @@ def get_calendar_service():
     service = build('calendar', 'v3', credentials=creds)
     return service
 
+# Temporary endpoint to force authentication.
+@app.route('/authorize')
+def authorize():
+    """
+    A temporary endpoint that forces the authentication flow and opens
+    the Google Sign-In page in the user's browser.
+    """
+    creds = None
+    if not creds:
+        try:
+            # Fallback to local credentials for testing.
+            if os.path.exists('credentials.json'):
+                flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
+            else:
+                creds_info = json.loads(os.environ.get('GOOGLE_CALENDAR_CREDENTIALS'))
+                flow = InstalledAppFlow.from_client_config(creds_info, SCOPES)
+            
+            auth_url, _ = flow.authorization_url(prompt='consent')
+            print("Please visit this URL to authorize the app:", auth_url)
+            return f"Please visit this URL to authorize the app: <a href='{auth_url}'>{auth_url}</a>"
+        except Exception as e:
+            return jsonify({"error": f"Authentication failed: {e}"}), 500
+    return "Authentication already performed. The token.json file should exist."
+
 # Main endpoint to handle scheduling requests from ElevenLabs.
 @app.route('/schedule-appointment', methods=['POST'])
 def schedule_appointment():
