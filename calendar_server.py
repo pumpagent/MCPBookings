@@ -34,57 +34,26 @@ def get_calendar_service():
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            # We are running a manual auth flow, so a token should exist.
-            raise Exception("No authentication token found. Please run the manual auth flow.")
+            # When running locally, it will fall back to credentials.json.
+            if os.path.exists('credentials.json'):
+                flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
+                creds = flow.run_local_server(port=0)
+            else:
+                try:
+                    creds_info = json.loads(os.environ.get('GOOGLE_CALENDAR_CREDENTIALS'))
+                    flow = InstalledAppFlow.from_client_config(creds_info, SCOPES)
+                    creds = flow.run_local_server(port=0)
+                except json.JSONDecodeError:
+                    return jsonify({"error": "Invalid GOOGLE_CALENDAR_CREDENTIALS environment variable."}), 400
+                except Exception as e:
+                    return jsonify({"error": f"Authentication failed: {e}"}), 500
+        
+        # Save the credentials for the next run.
+        with open('token.json', 'w') as token:
+            token.write(creds.to_json())
 
     service = build('calendar', 'v3', credentials=creds)
     return service
-
-# MANUAL AUTHENTICATION FLOW
-# These endpoints are for a one-time setup to get the token.json file.
-# You will remove them after the setup is complete.
-@app.route('/get-auth-url')
-def get_auth_url():
-    """
-    Returns the URL needed to authorize the app.
-    """
-    try:
-        if os.path.exists('credentials.json'):
-            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
-        else:
-            creds_info = json.loads(os.environ.get('GOOGLE_CALENDAR_CREDENTIALS'))
-            flow = InstalledAppFlow.from_client_config(creds_info, SCOPES)
-        
-        auth_url, _ = flow.authorization_url(prompt='consent')
-        return f"Please visit this URL to authorize the app: <a href='{auth_url}'>{auth_url}</a>"
-    except Exception as e:
-        return jsonify({"error": f"Failed to get authorization URL: {e}"}), 500
-
-@app.route('/callback')
-def callback():
-    """
-    Handles the redirect from Google to exchange the authorization code for a token.
-    """
-    code = request.args.get('code')
-    if not code:
-        return "Authorization code not found.", 400
-
-    try:
-        if os.path.exists('credentials.json'):
-            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
-        else:
-            creds_info = json.loads(os.environ.get('GOOGLE_CALENDAR_CREDENTIALS'))
-            flow = InstalledAppFlow.from_client_config(creds_info, SCOPES)
-        
-        flow.fetch_token(code=code)
-        
-        with open('token.json', 'w') as token:
-            token.write(flow.credentials.to_json())
-        
-        return "Authentication successful! The token.json file has been created. You can now stop the server."
-    except Exception as e:
-        return jsonify({"error": f"Failed to get token: {e}"}), 500
-
 
 # Main endpoint to handle scheduling requests from ElevenLabs.
 @app.route('/schedule-appointment', methods=['POST'])
