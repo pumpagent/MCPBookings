@@ -4,7 +4,7 @@
 
 import os
 import json
-from flask import Flask, request, jsonify, redirect
+from flask import Flask, request, jsonify, redirect, Response
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
@@ -84,7 +84,11 @@ def oauth2callback_render():
         with open(AUTH_TOKEN_FILE, 'w') as token:
             token.write(flow.credentials.to_json())
         
-        return "Authentication successful! The token.json file has been created. You can now download this file from Render and upload its content as an environment variable."
+        # READ THE FILE CONTENT AND DISPLAY IT
+        with open(AUTH_TOKEN_FILE, 'r') as token_file:
+            token_content = token_file.read()
+        
+        return Response(f"Authentication successful! The token has been created. Please copy the token below and paste it as the value for the new GOOGLE_CALENDAR_TOKEN environment variable.\n\n{token_content}", mimetype="text/plain")
     except Exception as e:
         return jsonify({"error": f"Failed to get token: {e}"}), 500
 
