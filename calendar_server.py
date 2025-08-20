@@ -4,16 +4,18 @@
 
 import os
 import json
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, redirect
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
+from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from urllib.parse import urlparse, urlunparse
 
 # Define the scopes required to interact with Google Calendar.
 # 'calendar.events' allows the app to manage (create, update, delete) events.
 SCOPES = ['https://www.googleapis.com/auth/calendar.events']
+AUTH_TOKEN_FILE = "token.json"
 
 app = Flask(__name__)
 
@@ -24,60 +26,68 @@ def get_calendar_service():
     in a JSON file. This is the secure way to authenticate.
     """
     creds = None
-    # The file token.json stores the user's access and refresh tokens.
-    # We will get this after the first run and store it.
-    if os.path.exists('token.json'):
-        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
-    
-    # If there are no valid credentials, let the user authenticate.
+    if os.path.exists(AUTH_TOKEN_FILE):
+        creds = Credentials.from_authorized_user_file(AUTH_TOKEN_FILE, SCOPES)
+
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            # When running locally, it will fall back to credentials.json.
-            if os.path.exists('credentials.json'):
-                flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
-                creds = flow.run_local_server(port=0)
-            else:
-                try:
-                    creds_info = json.loads(os.environ.get('GOOGLE_CALENDAR_CREDENTIALS'))
-                    flow = InstalledAppFlow.from_client_config(creds_info, SCOPES)
-                    creds = flow.run_local_server(port=0)
-                except json.JSONDecodeError:
-                    return jsonify({"error": "Invalid GOOGLE_CALENDAR_CREDENTIALS environment variable."}), 400
-                except Exception as e:
-                    return jsonify({"error": f"Authentication failed: {e}"}), 500
-        
-        # Save the credentials for the next run.
-        with open('token.json', 'w') as token:
-            token.write(creds.to_json())
-
+            raise Exception("Authentication required. Please run the local auth flow first.")
+    
     service = build('calendar', 'v3', credentials=creds)
     return service
 
-# Temporary endpoint to force authentication.
-@app.route('/authorize')
-def authorize():
+# MANUAL AUTHENTICATION FLOW for Render
+@app.route('/authorize-render')
+def authorize_render():
     """
-    A temporary endpoint that forces the authentication flow and opens
-    the Google Sign-In page in the user's browser.
+    Step 1: Redirects to Google's OAuth 2.0 consent page to get user's permission.
+    This endpoint is for one-time use on the live Render server.
     """
-    creds = None
-    if not creds:
-        try:
-            # Fallback to local credentials for testing.
-            if os.path.exists('credentials.json'):
-                flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
-            else:
-                creds_info = json.loads(os.environ.get('GOOGLE_CALENDAR_CREDENTIALS'))
-                flow = InstalledAppFlow.from_client_config(creds_info, SCOPES)
-            
-            auth_url, _ = flow.authorization_url(prompt='consent')
-            print("Please visit this URL to authorize the app:", auth_url)
-            return f"Please visit this URL to authorize the app: <a href='{auth_url}'>{auth_url}</a>"
-        except Exception as e:
-            return jsonify({"error": f"Authentication failed: {e}"}), 500
-    return "Authentication already performed. The token.json file should exist."
+    try:
+        redirect_uri = request.url_root.replace('http://', 'https://') + 'oauth2callback-render'
+        if os.path.exists('credentials.json'):
+            flow = Flow.from_client_secrets_file('credentials.json', scopes=SCOPES, redirect_uri=redirect_uri)
+        else:
+            creds_info = json.loads(os.environ.get('GOOGLE_CALENDAR_CREDENTIALS'))
+            flow = Flow.from_client_config(creds_info, scopes=SCOPES, redirect_uri=redirect_uri)
+
+        authorization_url, state = flow.authorization_url(access_type='offline', include_granted_scopes='true')
+        
+        # Save the state to the session for later verification.
+        # For this one-time use, we can simply pass the state.
+        return redirect(authorization_url)
+    except Exception as e:
+        return jsonify({"error": f"Failed to start authorization flow: {e}"}), 500
+
+@app.route('/oauth2callback-render')
+def oauth2callback_render():
+    """
+    Step 2: Handles the redirect from Google to exchange the authorization code for a token.
+    """
+    try:
+        code = request.args.get('code')
+        if not code:
+            return "Authorization code not found.", 400
+
+        redirect_uri = request.url_root.replace('http://', 'https://') + 'oauth2callback-render'
+        if os.path.exists('credentials.json'):
+            flow = Flow.from_client_secrets_file('credentials.json', scopes=SCOPES, redirect_uri=redirect_uri)
+        else:
+            creds_info = json.loads(os.environ.get('GOOGLE_CALENDAR_CREDENTIALS'))
+            flow = Flow.from_client_config(creds_info, scopes=SCOPES, redirect_uri=redirect_uri)
+        
+        flow.fetch_token(code=code)
+        
+        # Save the credentials to a temporary file, which you will then download.
+        with open(AUTH_TOKEN_FILE, 'w') as token:
+            token.write(flow.credentials.to_json())
+        
+        return "Authentication successful! The token.json file has been created. You can now download this file from Render and upload its content as an environment variable."
+    except Exception as e:
+        return jsonify({"error": f"Failed to get token: {e}"}), 500
+
 
 # Main endpoint to handle scheduling requests from ElevenLabs.
 @app.route('/schedule-appointment', methods=['POST'])
@@ -141,3 +151,43 @@ if __name__ == '__main__':
     # When running locally, you'll need to handle the port.
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=True)
+```
+# requirements.txt
+# This file lists all the Python libraries that Render needs to install
+# for your application to run correctly.
+
+Flask==2.3.3
+Werkzeug==2.3.8
+google-api-python-client
+google-auth
+google-auth-oauthlib
+gunicorn
+```
+# render.yaml
+# This is a configuration file that tells Render how to deploy your service.
+# Render automatically detects this file and configures your app accordingly.
+
+services:
+- type: web
+  name: adiuvansai-mcp-server
+  env: python
+  buildCommand: "pip install -r requirements.txt"
+  startCommand: "gunicorn calendar_server:app"
+  envVars:
+  - key: GOOGLE_CALENDAR_CREDENTIALS
+    sync: false
+```
+# credentials.json
+# You DO NOT push this file to Git. Instead, you'll copy its contents and
+# paste them into Render as a secure environment variable.
+
+# Copy the entire content of your credentials.json file here.
+# For example:
+# {
+#   "web": {
+#     "client_id": "...",
+#     "project_id": "...",
+#     "auth_uri": "...",
+#     ...
+  }
+}
