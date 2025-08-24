@@ -103,6 +103,9 @@ def schedule_appointment():
     try:
         # Parse the JSON payload from the request.
         data = request.json
+        if not data:
+            return jsonify({"error": "No JSON payload received."}), 400
+        
         summary = data.get('summary', 'New AI Agent Consultation')
         start_time = data.get('start_time')
         end_time = data.get('end_time')
