@@ -7,3 +7,5 @@ services:
   envVars:
   - key: GOOGLE_CALENDAR_CREDENTIALS
     sync: false
+  - key: GOOGLE_CALENDAR_TOKEN
+    sync: false
