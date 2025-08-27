@@ -4,16 +4,18 @@
 
 import os
 import json
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, redirect, Response
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from urllib.parse import urlparse, urlunparse
 
 # Define the scopes required to interact with Google Calendar.
 # 'calendar.events' allows the app to manage (create, update, delete) events.
 SCOPES = ['https://www.googleapis.com/auth/calendar.events']
+AUTH_TOKEN_FILE = "token.json"
 
 app = Flask(__name__)
 
@@ -43,6 +45,19 @@ def get_calendar_service():
     
     service = build('calendar', 'v3', credentials=creds)
     return service
+
+# New endpoint to serve the tools manifest.
+@app.route('/mcp_server_tools.json')
+def serve_mcp_tools():
+    """
+    Serves the mcp_server_tools.json file, which tells ElevenLabs what tools are available.
+    """
+    try:
+        with open('mcp_server_tools.json', 'r') as f:
+            data = json.load(f)
+        return jsonify(data)
+    except FileNotFoundError:
+        return jsonify({"error": "mcp_server_tools.json not found."}), 404
 
 # Main endpoint to handle scheduling requests from ElevenLabs.
 @app.route('/schedule-appointment', methods=['POST'])
